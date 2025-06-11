@@ -1,9 +1,9 @@
 {
-  "domain": "sfo_web",
-  "name": "SFO Web",
+  "domain": "sfoweb",
+  "name": "SFOWeb",
   "version": "1.0.0",
-  "documentation": "https://github.com/rassos/tabulexd/",
-  "issue_tracker": "https://github.com/yourusername/ha-sfo-appointments/issues",
+  "documentation": "https://github.com/yourusername/ha-sfoweb",
+  "issue_tracker": "https://github.com/yourusername/ha-sfoweb/issues",
   "dependencies": [],
   "codeowners": ["@rassos"],
   "requirements": ["playwright==1.40.0"],
