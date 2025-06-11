@@ -1,4 +1,4 @@
-"""The SFO Appointments integration."""
+"""The SFOWeb integration."""
 from __future__ import annotations
 
 import logging
@@ -20,7 +20,7 @@ SCAN_INTERVAL = timedelta(hours=6)  # Check every 6 hours
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up SFO Appointments from a config entry."""
+    """Set up SFOWeb from a config entry."""
     
     # Create the scraper
     scraper = SFOScraper(
@@ -29,7 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     
     # Create coordinator
-    coordinator = SFOAppointmentsDataUpdateCoordinator(hass, scraper)
+    coordinator = SFOWebDataUpdateCoordinator(hass, scraper)
     
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
@@ -52,8 +52,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-class SFOAppointmentsDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching data from the SFO system."""
+class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
+    """Class to manage fetching data from the SFOWeb system."""
 
     def __init__(self, hass: HomeAssistant, scraper: SFOScraper) -> None:
         """Initialize."""
