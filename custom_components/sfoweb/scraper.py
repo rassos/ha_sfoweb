@@ -5,16 +5,16 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from .const import (
-    APPOINTMENTS_TABLE_SELECTOR,
     APPOINTMENTS_URL,
     LOGIN_URL,
-    PARENT_LOGIN_SELECTOR,
-    PASSWORD_SELECTOR,
-    SUBMIT_SELECTOR,
-    USERNAME_SELECTOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,67 +30,76 @@ class SFOScraper:
 
     async def async_get_appointments(self) -> List[Dict[str, Any]]:
         """Fetch appointments from SFOWeb system."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_appointments_sync
+        )
+
+    def _get_appointments_sync(self) -> List[Dict[str, Any]]:
+        """Synchronous appointment fetching."""
         appointments = []
+        driver = None
         
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=["--disable-blink-features=AutomationControlled"]
-                )
+            # Setup Chrome options
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
 
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-                    viewport={"width": 1920, "height": 1080}
-                )
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            wait = WebDriverWait(driver, 15)
 
-                page = await context.new_page()
+            # Step 1: Open selector page
+            driver.get(LOGIN_URL)
 
-                # Step 1: Open selector page
-                await page.goto(LOGIN_URL)
-                await page.wait_for_load_state("networkidle")
+            # Step 2: Click the "Forældre Login"
+            parent_login = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'a[href*="ParentTabulexLogin"]'))
+            )
+            parent_login.click()
 
-                # Step 2: Click the "Forældre Login"
-                await page.click(PARENT_LOGIN_SELECTOR)
-                await page.wait_for_load_state("networkidle")
+            # Step 3: Login
+            username_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input#username')))
+            password_field = driver.find_element(By.CSS_SELECTOR, 'input#password')
+            
+            username_field.send_keys(self.username)
+            password_field.send_keys(self.password)
+            
+            submit_button = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+            submit_button.click()
 
-                # Step 3: Login
-                await page.wait_for_selector(USERNAME_SELECTOR, timeout=15000)
-                await page.fill(USERNAME_SELECTOR, self.username)
-                await page.fill(PASSWORD_SELECTOR, self.password)
-                await page.click(SUBMIT_SELECTOR)
-
-                # Step 4: Go to appointments page
-                await page.wait_for_load_state("networkidle")
-                await page.goto(APPOINTMENTS_URL)
-                await page.wait_for_load_state("networkidle")
-                await page.wait_for_timeout(2000)  # Give JS some breathing room
+            # Step 4: Go to appointments page
+            driver.get(APPOINTMENTS_URL)
+            
+            # Wait for page to load
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            
+            # Step 5: Extract data from the appointments table
+            try:
+                rows = driver.find_elements(By.CSS_SELECTOR, 'table.table-striped > tbody > tr')
                 
-                # Step 5: Extract data from the appointments table
-                rows = page.locator(APPOINTMENTS_TABLE_SELECTOR)
-                row_count = await rows.count()
-                
-                # Check if appointments exist
-                if row_count == 0:
+                if not rows:
                     _LOGGER.info("No appointment rows found")
-                elif row_count == 1:
-                    first_row_text = await rows.first.inner_text()
+                elif len(rows) == 1:
+                    first_row_text = rows[0].text
                     if "Der er ingen aktive" in first_row_text:
                         _LOGGER.info("No active appointments found")
-                        await browser.close()
                         return appointments
 
                 # Extract appointment data
-                for i in range(row_count):
-                    row = rows.nth(i)
-                    cells = row.locator('td')
-                    cell_count = await cells.count()
+                for row in rows:
+                    cells = row.find_elements(By.TAG_NAME, 'td')
                     
-                    if cell_count >= 4:  # Ensure we have at least the required columns
-                        date_text = (await cells.nth(0).inner_text()).strip()
-                        what_text = (await cells.nth(1).inner_text()).strip()
-                        time_text = (await cells.nth(2).inner_text()).strip()
-                        comment_text = (await cells.nth(3).inner_text()).strip()
+                    if len(cells) >= 4:  # Ensure we have at least the required columns
+                        date_text = cells[0].text.strip()
+                        what_text = cells[1].text.strip()
+                        time_text = cells[2].text.strip()
+                        comment_text = cells[3].text.strip()
                         
                         # Only include "Selvbestemmer" appointments
                         if "Selvbestemmer" in what_text:
@@ -103,14 +112,21 @@ class SFOScraper:
                             })
                             _LOGGER.debug(f"Found appointment: {date_text} - {time_text}")
 
-                await browser.close()
+            except Exception as e:
+                _LOGGER.warning(f"Error extracting appointments: {e}")
                 
-                _LOGGER.info(f"Successfully retrieved {len(appointments)} appointments")
-                return appointments
+            _LOGGER.info(f"Successfully retrieved {len(appointments)} appointments")
+            return appointments
 
-        except PlaywrightTimeoutError as e:
+        except TimeoutException as e:
             _LOGGER.error(f"Timeout error while scraping SFOWeb: {e}")
+            raise
+        except WebDriverException as e:
+            _LOGGER.error(f"WebDriver error while scraping SFOWeb: {e}")
             raise
         except Exception as e:
             _LOGGER.error(f"Unexpected error while scraping SFOWeb: {e}")
             raise
+        finally:
+            if driver:
+                driver.quit()
