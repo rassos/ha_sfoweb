@@ -1,0 +1,7 @@
+{
+  "name": "SFOWeb",
+  "content_in_root": false,
+  "render_readme": true,
+  "domains": ["sfoweb"],
+  "homeassistant": "2023.1.0"
+}
