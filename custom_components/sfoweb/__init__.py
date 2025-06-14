@@ -7,10 +7,9 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DOMAIN
-from .scraper import SFOScraper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,17 +21,8 @@ SCAN_INTERVAL = timedelta(hours=6)  # Check every 6 hours
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SFOWeb from a config entry."""
     
-    # Create the scraper
-    scraper = SFOScraper(
-        username=entry.data["username"],
-        password=entry.data["password"]
-    )
-    
-    # Create coordinator
-    coordinator = SFOWebDataUpdateCoordinator(hass, scraper)
-    
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+    # Create a simple coordinator for now
+    coordinator = SimpleDataUpdateCoordinator(hass)
     
     # Store coordinator
     hass.data.setdefault(DOMAIN, {})
@@ -52,12 +42,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching data from the SFOWeb system."""
+class SimpleDataUpdateCoordinator(DataUpdateCoordinator):
+    """Simple coordinator for testing."""
 
-    def __init__(self, hass: HomeAssistant, scraper: SFOScraper) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         """Initialize."""
-        self.scraper = scraper
         super().__init__(
             hass,
             _LOGGER,
@@ -66,8 +55,14 @@ class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_update_data(self):
-        """Update data via library."""
-        try:
-            return await self.scraper.async_get_appointments()
-        except Exception as exception:
-            raise UpdateFailed(exception) from exception
+        """Update data."""
+        # Return dummy data for now
+        return [
+            {
+                "date": "2025-06-12",
+                "what": "Selvbestemmer",
+                "time": "14:00-16:00",
+                "comment": "Test appointment",
+                "full_description": "2025-06-12 - 14:00-16:00"
+            }
+        ]
