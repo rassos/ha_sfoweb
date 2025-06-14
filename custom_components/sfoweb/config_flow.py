@@ -11,7 +11,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN
-from .scraper_js import SFOJSScraper
+from .scraper_enhanced import SFOEnhancedScraper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 # Test credentials
-                scraper = SFOJSScraper(user_input[CONF_USERNAME], user_input[CONF_PASSWORD])
+                scraper = SFOEnhancedScraper(user_input[CONF_USERNAME], user_input[CONF_PASSWORD])
                 credentials_valid = await scraper.async_test_credentials()
                 
                 if credentials_valid:

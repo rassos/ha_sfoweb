@@ -8,7 +8,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .scraper_js import SFOJSScraper
+from .scraper_enhanced import SFOEnhancedScraper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = entry.data[CONF_PASSWORD]
     
     # Create scraper instance
-    scraper = SFOJSScraper(username, password)
+    scraper = SFOEnhancedScraper(username, password)
     
     # Store scraper in hass data
     hass.data.setdefault(DOMAIN, {})
