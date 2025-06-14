@@ -66,9 +66,10 @@ class SFOEnhancedScraper:
                 login_successful = await self._enhanced_authentication_flow(session)
                 
                 if login_successful:
+                    _LOGGER.info("Authentication successful, fetching appointments...")
                     appointments = await self._fetch_appointments_enhanced(session)
                 else:
-                    _LOGGER.error("Enhanced authentication failed")
+                    _LOGGER.error("Enhanced authentication failed - no successful login detected")
                 
                 return appointments
                 
@@ -93,23 +94,35 @@ class SFOEnhancedScraper:
                 
                 # Get initial page
                 async with session.get(url) as response:
+                    _LOGGER.info(f"Response from {url}: status={response.status}, final_url={response.url}")
+                    
                     if response.status == 200:
                         html = await response.text()
+                        _LOGGER.debug(f"Received {len(html)} characters of HTML from {url}")
                         
                         # Look for API endpoints or AJAX calls in the HTML
                         api_endpoints = await self._extract_api_endpoints(html, str(response.url))
+                        _LOGGER.info(f"Found {len(api_endpoints)} API endpoints at {url}")
                         
                         # Try API-based authentication first
                         for endpoint in api_endpoints:
+                            _LOGGER.info(f"Attempting API authentication at: {endpoint}")
                             if await self._try_api_authentication(session, endpoint):
+                                _LOGGER.info(f"API authentication successful at {endpoint}")
                                 return True
                         
                         # Fall back to form-based authentication
+                        _LOGGER.info(f"Trying form-based authentication at {url}")
                         if await self._try_form_authentication(session, html, str(response.url)):
+                            _LOGGER.info(f"Form authentication successful at {url}")
                             return True
+                        else:
+                            _LOGGER.info(f"Form authentication failed at {url}")
+                    else:
+                        _LOGGER.warning(f"Non-200 response from {url}: {response.status}")
                             
             except Exception as e:
-                _LOGGER.debug(f"Failed to process {url}: {e}")
+                _LOGGER.warning(f"Failed to process {url}: {e}")
                 continue
         
         return False
@@ -257,13 +270,17 @@ class SFOEnhancedScraper:
             soup = BeautifulSoup(html, 'html.parser')
             forms = soup.find_all('form')
             
-            for form in forms:
+            _LOGGER.info(f"Found {len(forms)} forms on page")
+            
+            for i, form in enumerate(forms):
                 # Check if this form has username/password fields
                 username_fields = form.find_all('input', attrs={'name': re.compile(r'user|email|login', re.I)})
                 password_fields = form.find_all('input', attrs={'type': 'password'})
                 
+                _LOGGER.debug(f"Form {i+1}: username_fields={len(username_fields)}, password_fields={len(password_fields)}")
+                
                 if username_fields and password_fields:
-                    _LOGGER.info("Found login form")
+                    _LOGGER.info(f"Found login form {i+1} with username and password fields")
                     
                     action = form.get('action', form_url)
                     if not action.startswith('http'):
@@ -292,13 +309,22 @@ class SFOEnhancedScraper:
                         if submit_btn.get('name') and submit_btn.get('value'):
                             form_data[submit_btn['name']] = submit_btn['value']
                     
-                    _LOGGER.info(f"Submitting form to: {action}")
+                    _LOGGER.info(f"Submitting form to: {action} with data: {list(form_data.keys())}")
                     
                     async with session.post(action, data=form_data) as response:
+                        _LOGGER.info(f"Form submission response: status={response.status}, final_url={response.url}")
+                        
                         if response.status in [200, 302]:
                             response_text = await response.text()
+                            _LOGGER.debug(f"Form response length: {len(response_text)} characters")
+                            
                             if await self._check_auth_success(response_text, response.status):
+                                _LOGGER.info("Form submission successful - authentication confirmed")
                                 return True
+                            else:
+                                _LOGGER.info("Form submission completed but authentication not confirmed")
+                        else:
+                            _LOGGER.warning(f"Form submission failed with status {response.status}")
                                 
         except Exception as e:
             _LOGGER.debug(f"Form submission failed: {e}")
