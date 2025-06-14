@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform, CONF_USERNAME, CONF_PASSWORD
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
 from .scraper import SFOScraper
@@ -16,53 +14,48 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
-SCAN_INTERVAL = timedelta(hours=6)
-
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SFOWeb from a config entry."""
+    _LOGGER.info("Setting up SFOWeb integration")
     
+    # Get credentials from config entry
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     
+    # Create scraper instance
     scraper = SFOScraper(username, password)
-    coordinator = SFOWebDataUpdateCoordinator(hass, scraper)
     
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
-    
+    # Store scraper in hass data
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    hass.data[DOMAIN][entry.entry_id] = {
+        "scraper": scraper,
+    }
     
+    # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
+    _LOGGER.info("SFOWeb integration setup complete")
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    _LOGGER.info("Unloading SFOWeb integration")
+    
+    # Unload platforms
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        # Remove entry from hass data
         hass.data[DOMAIN].pop(entry.entry_id)
+        
+        # If no more entries, remove domain data
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
     
     return unload_ok
 
 
-class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching data from SFOWeb."""
-
-    def __init__(self, hass: HomeAssistant, scraper: SFOScraper) -> None:
-        """Initialize."""
-        self.scraper = scraper
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=SCAN_INTERVAL,
-        )
-
-    async def _async_update_data(self):
-        """Update data via scraper."""
-        try:
-            return await self.scraper.async_get_appointments()
-        except Exception as exception:
-            raise UpdateFailed(f"Error communicating with SFOWeb: {exception}") from exception
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry."""
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
