@@ -350,6 +350,8 @@ class SFOEnhancedScraper:
             
             appointment_urls = [
                 APPOINTMENTS_URL,
+                "https://www.sfoweb.dk/guardian/appointments",
+                "https://www.sfoweb.dk/guardian/dashboard",
                 "https://soestjernen.sfoweb.dk/aftaler",
                 "https://soestjernen.sfoweb.dk/appointments",
                 "https://soestjernen.sfoweb.dk/calendar",

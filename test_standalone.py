@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 # Constants
 LOGIN_URL = "https://sfo-web.aula.dk"
-APPOINTMENTS_URL = "https://sfo-web.aula.dk/aftaler"
+APPOINTMENTS_URL = "https://www.sfoweb.dk/guardian/appointments"
 
 # Set up logging
 logging.basicConfig(
@@ -321,7 +321,8 @@ class SFOEnhancedScraper:
             # Success indicators
             success_indicators = [
                 'dashboard', 'aftaler', 'appointments', 'kalender', 'schedule',
-                'velkommen', 'welcome', 'logout', 'logud', 'profil', 'profile'
+                'velkommen', 'welcome', 'logout', 'logud', 'profil', 'profile',
+                'guardian', 'forældre', 'parent'
             ]
             
             # Error indicators
@@ -333,8 +334,11 @@ class SFOEnhancedScraper:
             has_success = any(indicator in text_lower for indicator in success_indicators)
             has_error = any(indicator in text_lower for indicator in error_indicators)
             
+            _LOGGER.debug(f"Auth check - Status: {status_code}, Success indicators: {has_success}, Error indicators: {has_error}, Text length: {len(response_text)}")
+            
             # If we have success indicators and no errors, or if it's a redirect
             if (has_success and not has_error) or status_code == 302:
+                _LOGGER.info("Authentication success detected!")
                 return True
             
             # If no login indicators are present and we have substantial content
@@ -342,6 +346,7 @@ class SFOEnhancedScraper:
             has_login = any(indicator in text_lower for indicator in login_indicators)
             
             if not has_login and not has_error and len(response_text) > 1000:
+                _LOGGER.info("Authentication likely successful (no login page)")
                 return True
                 
         except Exception as e:
@@ -358,7 +363,9 @@ class SFOEnhancedScraper:
             
             appointment_urls = [
                 APPOINTMENTS_URL,
-                "https://soestjernen.sfoweb.dk/aftaler",
+                "https://www.sfoweb.dk/guardian/appointments",
+                "https://www.sfoweb.dk/guardian/dashboard",
+                "https://soestjernen.sfoweb.dk/aftaler", 
                 "https://soestjernen.sfoweb.dk/appointments",
                 "https://soestjernen.sfoweb.dk/calendar",
                 "https://soestjernen.sfoweb.dk/dashboard",
@@ -366,13 +373,31 @@ class SFOEnhancedScraper:
             
             for url in appointment_urls:
                 try:
+                    _LOGGER.info(f"Trying to fetch appointments from: {url}")
                     async with session.get(url) as response:
+                        _LOGGER.info(f"Response status for {url}: {response.status}")
+                        
                         if response.status == 200:
                             html = await response.text()
+                            _LOGGER.info(f"Received HTML content length: {len(html)}")
+                            
+                            # Log a sample of the content for debugging
+                            if html:
+                                # Check if we're on a login page or appointment page
+                                html_lower = html.lower()
+                                if 'login' in html_lower:
+                                    _LOGGER.warning(f"Still on login page at {url}")
+                                elif 'appointment' in html_lower or 'aftale' in html_lower:
+                                    _LOGGER.info(f"Found appointments page at {url}")
+                                else:
+                                    _LOGGER.info(f"Page content at {url} doesn't appear to be appointments")
+                                    # Log first 500 chars for debugging
+                                    _LOGGER.debug(f"Page sample: {html[:500]}")
                             
                             # Try API endpoints first
                             api_endpoints = await self._extract_appointment_apis(html, str(response.url))
                             for endpoint in api_endpoints:
+                                _LOGGER.info(f"Trying API endpoint: {endpoint}")
                                 api_appointments = await self._fetch_from_api(session, endpoint)
                                 if api_appointments:
                                     appointments.extend(api_appointments)
@@ -381,8 +406,17 @@ class SFOEnhancedScraper:
                             # Fall back to HTML parsing
                             html_appointments = self._parse_appointments_enhanced(html)
                             if html_appointments:
+                                _LOGGER.info(f"Found {len(html_appointments)} appointments via HTML parsing")
                                 appointments.extend(html_appointments)
                                 return appointments
+                            else:
+                                _LOGGER.info(f"No appointments found via HTML parsing at {url}")
+                        elif response.status == 302:
+                            _LOGGER.info(f"Redirect from {url} to {response.headers.get('Location', 'unknown')}")
+                        elif response.status == 403:
+                            _LOGGER.warning(f"Access denied to {url} - may need authentication")
+                        else:
+                            _LOGGER.warning(f"Unexpected status {response.status} for {url}")
                                 
                 except Exception as e:
                     _LOGGER.debug(f"Failed to fetch from {url}: {e}")
