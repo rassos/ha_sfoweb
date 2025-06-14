@@ -9,7 +9,7 @@ import os
 # Add the custom_components path to sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components', 'sfoweb'))
 
-from scraper_js import SFOJSScraper
+from scraper_enhanced import SFOEnhancedScraper
 
 # Set up logging
 logging.basicConfig(
@@ -19,10 +19,10 @@ logging.basicConfig(
 
 async def test_scraper():
     """Test the scraper with dummy credentials."""
-    print("Testing SFO JavaScript Scraper...")
+    print("Testing SFO Enhanced Scraper...")
     
     # Use dummy credentials for testing (replace with real ones)
-    scraper = SFOJSScraper("test_user", "test_pass")
+    scraper = SFOEnhancedScraper("test_user", "test_pass")
     
     try:
         print("1. Testing credential validation...")
@@ -44,8 +44,8 @@ async def test_scraper():
         return False
 
 if __name__ == "__main__":
-    print("SFO JavaScript Scraper Test")
-    print("===========================")
+    print("SFO Enhanced Scraper Test")
+    print("========================")
     print("Note: This will use dummy credentials and likely fail authentication,")
     print("but it will test the basic functionality and import structure.")
     print()
