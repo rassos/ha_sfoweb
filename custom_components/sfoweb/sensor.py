@@ -27,29 +27,30 @@ async def async_setup_entry(
     username = config_entry.data[CONF_USERNAME]
     
     sensors = [
-        SFOWebTestSensor(coordinator, username),
+        SFOWebAppointmentsSensor(coordinator, username),
+        SFOWebNextAppointmentSensor(coordinator, username),
     ]
     
     async_add_entities(sensors, update_before_add=True)
 
 
-class SFOWebTestSensor(CoordinatorEntity, SensorEntity):
-    """Test sensor to verify integration works."""
+class SFOWebAppointmentsSensor(CoordinatorEntity, SensorEntity):
+    """Sensor showing all SFOWeb appointments."""
 
     def __init__(self, coordinator, username: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._username = username
-        self._attr_name = f"SFOWeb Test ({username})"
-        self._attr_unique_id = f"sfoweb_test_{username}"
-        self._attr_icon = "mdi:calendar-check"
+        self._attr_name = f"SFOWeb Appointments ({username})"
+        self._attr_unique_id = f"sfoweb_appointments_{username}"
+        self._attr_icon = "mdi:calendar-multiple"
 
     @property
     def native_value(self) -> str:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
-            return "No data"
-        return f"Found {len(self.coordinator.data)} appointments"
+            return "Unknown"
+        return f"{len(self.coordinator.data)}"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -60,9 +61,52 @@ class SFOWebTestSensor(CoordinatorEntity, SensorEntity):
         return {
             "appointments": self.coordinator.data,
             "last_updated": datetime.now().isoformat(),
+            "username": self._username,
         }
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return True
+        return self.coordinator.last_update_success
+
+
+class SFOWebNextAppointmentSensor(CoordinatorEntity, SensorEntity):
+    """Sensor showing the next SFOWeb appointment."""
+
+    def __init__(self, coordinator, username: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._username = username
+        self._attr_name = f"SFOWeb Next Appointment ({username})"
+        self._attr_unique_id = f"sfoweb_next_{username}"
+        self._attr_icon = "mdi:calendar-clock"
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        if self.coordinator.data is None or not self.coordinator.data:
+            return "No appointments"
+        
+        # Get the first appointment (assuming they're sorted by date)
+        next_appointment = self.coordinator.data[0]
+        return next_appointment.get("full_description", "Unknown")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        if self.coordinator.data is None or not self.coordinator.data:
+            return {}
+        
+        next_appointment = self.coordinator.data[0]
+        return {
+            "date": next_appointment.get("date"),
+            "time": next_appointment.get("time"),
+            "what": next_appointment.get("what"),
+            "comment": next_appointment.get("comment"),
+            "username": self._username,
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success
