@@ -1,13 +1,13 @@
-"""SFOWeb scraper for appointments with extensive debugging."""
+"""SFOWeb scraper for appointments using Playwright with container support."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
 from typing import Any, Dict, List
-import aiohttp
-from bs4 import BeautifulSoup
-import re
-from datetime import datetime
+
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from .const import (
     APPOINTMENTS_URL,
@@ -24,299 +24,315 @@ class SFOScraper:
         """Initialize the scraper."""
         self.username = username
         self.password = password
+        self._browser_installed = False
+
+    async def _ensure_browser_installed(self) -> bool:
+        """Ensure Playwright browser is installed."""
+        if self._browser_installed:
+            return True
+            
+        try:
+            # Install chromium browser for Playwright
+            _LOGGER.info("Installing Playwright browser...")
+            
+            # Run playwright install command
+            process = await asyncio.create_subprocess_exec(
+                "python", "-m", "playwright", "install", "chromium",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                _LOGGER.info("Playwright browser installed successfully")
+                self._browser_installed = True
+                return True
+            else:
+                _LOGGER.error(f"Failed to install Playwright browser: {stderr.decode()}")
+                return False
+                
+        except Exception as e:
+            _LOGGER.error(f"Error installing Playwright browser: {e}")
+            return False
 
     async def async_get_appointments(self) -> List[Dict[str, Any]]:
         """Fetch appointments from SFOWeb system."""
         appointments = []
         
         try:
-            timeout = aiohttp.ClientTimeout(total=30)
+            # Ensure browser is installed
+            if not await self._ensure_browser_installed():
+                _LOGGER.error("Could not install Playwright browser")
+                return appointments
             
-            # Use a more realistic user agent
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                # Step 1: Get the main login page
-                _LOGGER.info(f"Getting main login page: {LOGIN_URL}")
-                async with session.get(LOGIN_URL) as response:
-                    if response.status != 200:
-                        _LOGGER.error(f"Failed to load login page: {response.status}")
+            async with async_playwright() as p:
+                # Launch browser with container-friendly options
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-accelerated-2d-canvas",
+                        "--no-first-run",
+                        "--no-zygote",
+                        "--single-process",
+                        "--disable-gpu",
+                        "--disable-blink-features=AutomationControlled"
+                    ]
+                )
+
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    viewport={"width": 1920, "height": 1080}
+                )
+
+                page = await context.new_page()
+
+                # Step 1: Open selector page
+                _LOGGER.info(f"Opening login page: {LOGIN_URL}")
+                await page.goto(LOGIN_URL, wait_until="networkidle")
+
+                # Step 2: Click the "Forældre Login"
+                try:
+                    _LOGGER.info("Looking for parent login link...")
+                    
+                    # Wait a bit for dynamic content to load
+                    await page.wait_for_timeout(2000)
+                    
+                    # Try multiple selectors for the parent login
+                    parent_selectors = [
+                        'a[href*="ParentTabulexLogin"]',
+                        'a:has-text("Forældre")',
+                        'a:has-text("Parent")',
+                        'a:has-text("forældre")'
+                    ]
+                    
+                    parent_clicked = False
+                    for selector in parent_selectors:
+                        try:
+                            element = page.locator(selector).first
+                            if await element.count() > 0:
+                                _LOGGER.info(f"Found parent login with selector: {selector}")
+                                await element.click()
+                                parent_clicked = True
+                                break
+                        except Exception as e:
+                            _LOGGER.debug(f"Selector {selector} failed: {e}")
+                            continue
+                    
+                    if not parent_clicked:
+                        _LOGGER.error("Could not find parent login link")
+                        await browser.close()
                         return appointments
+                        
+                    await page.wait_for_load_state("networkidle")
                     
-                    login_html = await response.text()
-                    _LOGGER.debug(f"Login page HTML length: {len(login_html)}")
-                    
-                    # Save a snippet for debugging
-                    if len(login_html) > 500:
-                        _LOGGER.debug(f"Login page HTML snippet: {login_html[:500]}...")
-                    else:
-                        _LOGGER.debug(f"Full login page HTML: {login_html}")
-                    
-                    soup = BeautifulSoup(login_html, 'html.parser')
-                
-                # Step 2: Look for parent login link with multiple strategies
-                parent_login_link = None
-                
-                # Strategy 1: Look for ParentTabulexLogin
-                parent_login_link = soup.find('a', href=lambda x: x and 'ParentTabulexLogin' in x)
-                if parent_login_link:
-                    _LOGGER.info("Found parent login link with ParentTabulexLogin")
-                else:
-                    # Strategy 2: Look for text containing "forældre" or "parent"
-                    for link in soup.find_all('a'):
-                        link_text = link.get_text().lower()
-                        if 'forældre' in link_text or 'parent' in link_text:
-                            parent_login_link = link
-                            _LOGGER.info(f"Found parent login link by text: {link_text}")
-                            break
-                
-                if not parent_login_link:
-                    # Log all links for debugging
-                    all_links = soup.find_all('a')
-                    _LOGGER.error(f"Could not find parent login link. Found {len(all_links)} links:")
-                    for i, link in enumerate(all_links[:10]):  # Show first 10 links
-                        href = link.get('href', 'No href')
-                        text = link.get_text().strip()
-                        _LOGGER.error(f"Link {i}: href='{href}', text='{text}'")
+                except Exception as e:
+                    _LOGGER.error(f"Error clicking parent login: {e}")
+                    await browser.close()
                     return appointments
-                
-                parent_login_url = parent_login_link['href']
-                if not parent_login_url.startswith('http'):
-                    if parent_login_url.startswith('/'):
-                        parent_login_url = f"https://sfo-web.aula.dk{parent_login_url}"
-                    else:
-                        parent_login_url = f"https://sfo-web.aula.dk/{parent_login_url}"
-                
-                _LOGGER.info(f"Parent login URL: {parent_login_url}")
-                
-                # Step 3: Go to parent login page
-                async with session.get(parent_login_url) as response:
-                    if response.status != 200:
-                        _LOGGER.error(f"Failed to load parent login page: {response.status}")
+
+                # Step 3: Login
+                try:
+                    _LOGGER.info("Attempting to login...")
+                    
+                    # Wait for login form to appear
+                    await page.wait_for_timeout(2000)
+                    
+                    # Try multiple selectors for username field
+                    username_selectors = [
+                        'input#username',
+                        'input[name="username"]',
+                        'input[type="text"]',
+                        'input[placeholder*="bruger"]',
+                        'input[placeholder*="email"]'
+                    ]
+                    
+                    username_filled = False
+                    for selector in username_selectors:
+                        try:
+                            element = page.locator(selector).first
+                            if await element.count() > 0:
+                                _LOGGER.info(f"Found username field with selector: {selector}")
+                                await element.fill(self.username)
+                                username_filled = True
+                                break
+                        except Exception as e:
+                            _LOGGER.debug(f"Username selector {selector} failed: {e}")
+                            continue
+                    
+                    if not username_filled:
+                        _LOGGER.error("Could not find username field")
+                        await browser.close()
                         return appointments
                     
-                    parent_login_html = await response.text()
-                    _LOGGER.debug(f"Parent login page HTML length: {len(parent_login_html)}")
+                    # Try multiple selectors for password field
+                    password_selectors = [
+                        'input#password',
+                        'input[name="password"]',
+                        'input[type="password"]'
+                    ]
                     
-                    # Save snippet for debugging
-                    if len(parent_login_html) > 500:
-                        _LOGGER.debug(f"Parent login page snippet: {parent_login_html[:500]}...")
+                    password_filled = False
+                    for selector in password_selectors:
+                        try:
+                            element = page.locator(selector).first
+                            if await element.count() > 0:
+                                _LOGGER.info(f"Found password field with selector: {selector}")
+                                await element.fill(self.password)
+                                password_filled = True
+                                break
+                        except Exception as e:
+                            _LOGGER.debug(f"Password selector {selector} failed: {e}")
+                            continue
                     
-                    login_soup = BeautifulSoup(parent_login_html, 'html.parser')
-                
-                # Step 4: Find the login form with multiple strategies
-                login_form = None
-                
-                # Strategy 1: Find form tag
-                login_form = login_soup.find('form')
-                if login_form:
-                    _LOGGER.info("Found login form using <form> tag")
-                else:
-                    # Strategy 2: Look for forms with specific attributes
-                    login_form = login_soup.find('form', {'method': 'post'})
-                    if login_form:
-                        _LOGGER.info("Found login form with method=post")
-                
-                if not login_form:
-                    # Log all forms for debugging
-                    all_forms = login_soup.find_all('form')
-                    _LOGGER.error(f"Could not find login form. Found {len(all_forms)} forms:")
-                    for i, form in enumerate(all_forms):
-                        action = form.get('action', 'No action')
-                        method = form.get('method', 'No method')
-                        _LOGGER.error(f"Form {i}: action='{action}', method='{method}'")
+                    if not password_filled:
+                        _LOGGER.error("Could not find password field")
+                        await browser.close()
+                        return appointments
                     
-                    # Also check for input fields (maybe it's not in a form)
-                    username_inputs = login_soup.find_all('input', {'name': 'username'})
-                    password_inputs = login_soup.find_all('input', {'type': 'password'})
-                    _LOGGER.error(f"Found {len(username_inputs)} username inputs and {len(password_inputs)} password inputs")
+                    # Submit the form
+                    submit_selectors = [
+                        'button[type="submit"]',
+                        'input[type="submit"]',
+                        'button:has-text("Log")',
+                        'button:has-text("Sign")',
+                        '.login-button',
+                        '#login-submit'
+                    ]
                     
+                    submit_clicked = False
+                    for selector in submit_selectors:
+                        try:
+                            element = page.locator(selector).first
+                            if await element.count() > 0:
+                                _LOGGER.info(f"Found submit button with selector: {selector}")
+                                await element.click()
+                                submit_clicked = True
+                                break
+                        except Exception as e:
+                            _LOGGER.debug(f"Submit selector {selector} failed: {e}")
+                            continue
+                    
+                    if not submit_clicked:
+                        _LOGGER.error("Could not find submit button")
+                        await browser.close()
+                        return appointments
+                    
+                    # Wait for navigation after login
+                    await page.wait_for_load_state("networkidle")
+                    
+                except Exception as e:
+                    _LOGGER.error(f"Error during login: {e}")
+                    await browser.close()
                     return appointments
+
+                # Step 4: Go to appointments page
+                _LOGGER.info(f"Navigating to appointments page: {APPOINTMENTS_URL}")
+                await page.goto(APPOINTMENTS_URL, wait_until="networkidle")
+                await page.wait_for_timeout(2000)  # Give JS some breathing room
                 
-                form_action = login_form.get('action', '')
-                if not form_action:
-                    # If no action, submit to same URL
-                    form_action = parent_login_url
-                elif not form_action.startswith('http'):
-                    if form_action.startswith('/'):
-                        form_action = f"https://sfo-web.aula.dk{form_action}"
-                    else:
-                        form_action = f"https://sfo-web.aula.dk/{form_action}"
-                
-                _LOGGER.info(f"Form action URL: {form_action}")
-                
-                # Prepare login data
-                form_data = {
-                    'username': self.username,
-                    'password': self.password,
-                }
-                
-                # Add any hidden fields
-                hidden_count = 0
-                for hidden_input in login_soup.find_all('input', type='hidden'):
-                    name = hidden_input.get('name')
-                    value = hidden_input.get('value', '')
-                    if name:
-                        form_data[name] = value
-                        hidden_count += 1
-                        _LOGGER.debug(f"Added hidden field: {name}={value}")
-                
-                _LOGGER.info(f"Added {hidden_count} hidden fields to form data")
-                _LOGGER.debug(f"Final form data keys: {list(form_data.keys())}")
-                
-                # Step 5: Submit login form
-                _LOGGER.info(f"Submitting login to: {form_action}")
-                async with session.post(form_action, data=form_data) as response:
-                    _LOGGER.info(f"Login response status: {response.status}")
-                    _LOGGER.info(f"Login response URL: {response.url}")
+                # Step 5: Extract data from the appointments table
+                try:
+                    # Wait for table to load
+                    await page.wait_for_timeout(3000)
                     
-                    if response.status not in [200, 302]:
-                        _LOGGER.error(f"Login failed with status: {response.status}")
+                    # Try multiple selectors for the appointments table
+                    table_selectors = [
+                        'table.table-striped tbody tr',
+                        'table tbody tr',
+                        '.appointments tr',
+                        '[data-table] tr'
+                    ]
+                    
+                    rows = None
+                    for selector in table_selectors:
+                        try:
+                            rows = page.locator(selector)
+                            row_count = await rows.count()
+                            if row_count > 0:
+                                _LOGGER.info(f"Found {row_count} rows with selector: {selector}")
+                                break
+                        except Exception as e:
+                            _LOGGER.debug(f"Table selector {selector} failed: {e}")
+                            continue
+                    
+                    if not rows or await rows.count() == 0:
+                        _LOGGER.warning("No appointment rows found")
+                        await browser.close()
                         return appointments
                     
-                    response_text = await response.text()
-                    _LOGGER.debug(f"Login response length: {len(response_text)}")
+                    row_count = await rows.count()
                     
-                    # Check for error indicators
-                    if "fejl" in response_text.lower() or "error" in response_text.lower():
-                        _LOGGER.error("Login response contains error keywords")
-                        if len(response_text) > 200:
-                            _LOGGER.debug(f"Error response snippet: {response_text[:200]}...")
-                        return appointments
+                    # Check if appointments exist
+                    if row_count == 1:
+                        first_row_text = await rows.first.inner_text()
+                        if "Der er ingen aktive" in first_row_text:
+                            _LOGGER.info("No active appointments found")
+                            await browser.close()
+                            return appointments
+
+                    # Extract appointment data
+                    for i in range(row_count):
+                        try:
+                            row = rows.nth(i)
+                            cells = row.locator('td')
+                            cell_count = await cells.count()
+                            
+                            if cell_count >= 4:  # Ensure we have at least the required columns
+                                date_text = (await cells.nth(0).inner_text()).strip()
+                                what_text = (await cells.nth(1).inner_text()).strip()
+                                time_text = (await cells.nth(2).inner_text()).strip()
+                                comment_text = (await cells.nth(3).inner_text()).strip()
+                                
+                                _LOGGER.debug(f"Row {i}: {date_text} | {what_text} | {time_text}")
+                                
+                                # Only include "Selvbestemmer" appointments
+                                if "Selvbestemmer" in what_text:
+                                    appointments.append({
+                                        "date": date_text,
+                                        "what": what_text,
+                                        "time": time_text,
+                                        "comment": comment_text,
+                                        "full_description": f"{date_text} - {time_text}"
+                                    })
+                                    _LOGGER.info(f"Found appointment: {date_text} - {time_text}")
+                        except Exception as e:
+                            _LOGGER.debug(f"Error processing row {i}: {e}")
+                            continue
+
+                except Exception as e:
+                    _LOGGER.error(f"Error extracting appointments: {e}")
+
+                await browser.close()
                 
-                # Step 6: Try to access appointments page
-                _LOGGER.info(f"Attempting to access appointments page: {APPOINTMENTS_URL}")
-                async with session.get(APPOINTMENTS_URL) as response:
-                    _LOGGER.info(f"Appointments page status: {response.status}")
-                    
-                    if response.status != 200:
-                        _LOGGER.error(f"Failed to load appointments page: {response.status}")
-                        return appointments
-                    
-                    appointments_html = await response.text()
-                    _LOGGER.debug(f"Appointments page HTML length: {len(appointments_html)}")
-                    
-                    appointments_soup = BeautifulSoup(appointments_html, 'html.parser')
-                
-                # Step 7: Parse appointments table
-                appointments = self._parse_appointments_table(appointments_soup)
-                
-                _LOGGER.info(f"Successfully retrieved {len(appointments)} appointments for {self.username}")
+                _LOGGER.info(f"Successfully retrieved {len(appointments)} appointments")
                 return appointments
 
-        except aiohttp.ClientError as e:
-            _LOGGER.error(f"Network error while scraping SFOWeb: {e}")
-            # Return empty list instead of raising to avoid breaking the integration
-            return []
+        except PlaywrightTimeoutError as e:
+            _LOGGER.error(f"Timeout error while scraping SFOWeb: {e}")
+            return appointments
         except Exception as e:
-            _LOGGER.error(f"Unexpected error while scraping SFOWeb: {e}", exc_info=True)
-            return []
-
-    def _parse_appointments_table(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """Parse the appointments table from the HTML."""
-        appointments = []
-        
-        try:
-            # Look for tables with different strategies
-            table = None
-            
-            # Strategy 1: table with class table-striped
-            table = soup.find('table', class_='table-striped')
-            if table:
-                _LOGGER.info("Found appointments table with class 'table-striped'")
-            else:
-                # Strategy 2: any table
-                table = soup.find('table')
-                if table:
-                    _LOGGER.info("Found appointments table (generic table)")
-            
-            if not table:
-                # Log what we found instead
-                all_tables = soup.find_all('table')
-                _LOGGER.warning(f"No appointments table found. Found {len(all_tables)} tables total")
-                
-                # Look for any content that might contain appointments
-                content_divs = soup.find_all('div', class_=['content', 'main', 'appointments'])
-                _LOGGER.info(f"Found {len(content_divs)} potential content divs")
-                
-                return appointments
-            
-            tbody = table.find('tbody')
-            if not tbody:
-                _LOGGER.debug("No tbody found, using table directly")
-                tbody = table
-            
-            rows = tbody.find_all('tr')
-            _LOGGER.info(f"Found {len(rows)} rows in appointments table")
-            
-            if not rows:
-                _LOGGER.info("No appointment rows found")
-                return appointments
-            
-            # Check if there's a "no appointments" message
-            if len(rows) == 1:
-                first_row_text = rows[0].get_text().strip()
-                _LOGGER.debug(f"Single row text: {first_row_text}")
-                if "Der er ingen aktive" in first_row_text or "ingen" in first_row_text.lower():
-                    _LOGGER.info("No active appointments message found")
-                    return appointments
-            
-            # Parse each row
-            for i, row in enumerate(rows):
-                cells = row.find_all('td')
-                _LOGGER.debug(f"Row {i}: found {len(cells)} cells")
-                
-                if len(cells) >= 4:  # Ensure we have at least the required columns
-                    date_text = cells[0].get_text().strip()
-                    what_text = cells[1].get_text().strip()
-                    time_text = cells[2].get_text().strip()
-                    comment_text = cells[3].get_text().strip()
-                    
-                    _LOGGER.debug(f"Row {i}: date='{date_text}', what='{what_text}', time='{time_text}'")
-                    
-                    # Only include "Selvbestemmer" appointments
-                    if "Selvbestemmer" in what_text:
-                        appointment = {
-                            "date": date_text,
-                            "what": what_text,
-                            "time": time_text,
-                            "comment": comment_text,
-                            "full_description": f"{date_text} - {time_text}"
-                        }
-                        appointments.append(appointment)
-                        _LOGGER.info(f"Added appointment: {date_text} - {time_text}")
-                    else:
-                        _LOGGER.debug(f"Skipped non-Selvbestemmer appointment: {what_text}")
-                elif len(cells) > 0:
-                    # Log what we found in case structure is different
-                    row_text = " | ".join([cell.get_text().strip() for cell in cells])
-                    _LOGGER.debug(f"Row {i} has {len(cells)} cells: {row_text}")
-            
-        except Exception as e:
-            _LOGGER.error(f"Error parsing appointments table: {e}", exc_info=True)
-        
-        return appointments
+            _LOGGER.error(f"Unexpected error while scraping SFOWeb: {e}")
+            return appointments
 
     async def async_test_credentials(self) -> bool:
         """Test if credentials are valid."""
         try:
             if not self.username or not self.password:
-                _LOGGER.error("Username or password is empty")
                 return False
             
             # Basic validation
             if len(self.username) < 3 or len(self.password) < 3:
-                _LOGGER.error("Username or password too short")
                 return False
             
             _LOGGER.info(f"Testing credentials for user: {self.username}")
             
-            # For now, just do basic validation to avoid blocking the setup
-            # The real test will happen when fetching appointments
+            # For setup, just validate format to avoid long wait times
+            # Real validation happens during data fetch
             return True
             
         except Exception as e:
-            _LOGGER.error(f"Credential test failed: {e}")
+            _LOGGER.debug(f"Credential test failed: {e}")
             return False
