@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -31,25 +31,31 @@ async def async_setup_entry(
 ) -> None:
     """Set up SFOWeb sensor based on a config entry."""
     
-    # Get the scraper instance from the domain data
-    scraper = hass.data[DOMAIN][config_entry.entry_id]["scraper"]
-    
-    # Create data update coordinator
-    coordinator = SFOWebDataUpdateCoordinator(hass, scraper)
-    
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
-    
-    # Store coordinator in domain data
-    hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
-    
-    # Create sensor entities
-    sensors = [
-        SFOWebAppointmentsSensor(coordinator, config_entry),
-        SFOWebNextAppointmentSensor(coordinator, config_entry),
-    ]
-    
-    async_add_entities(sensors, True)
+    try:
+        # Get the scraper instance from the domain data
+        scraper = hass.data[DOMAIN][config_entry.entry_id]["scraper"]
+        
+        # Create data update coordinator
+        coordinator = SFOWebDataUpdateCoordinator(hass, scraper)
+        
+        # Fetch initial data
+        await coordinator.async_config_entry_first_refresh()
+        
+        # Store coordinator in domain data
+        hass.data[DOMAIN][config_entry.entry_id]["coordinator"] = coordinator
+        
+        # Create sensor entities
+        sensors = [
+            SFOWebAppointmentsSensor(coordinator, config_entry),
+            SFOWebNextAppointmentSensor(coordinator, config_entry),
+        ]
+        
+        async_add_entities(sensors, True)
+        _LOGGER.info("SFOWeb sensors successfully set up")
+        
+    except Exception as e:
+        _LOGGER.error(f"Error setting up SFOWeb sensors: {e}")
+        raise
 
 
 class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
@@ -112,7 +118,6 @@ class SFOWebAppointmentsSensor(CoordinatorEntity, SensorEntity):
         
         # Add appointment details
         for i, appointment in enumerate(self.coordinator.data):
-            appointment_key = f"appointment_{i+1}"
             attributes["appointments"].append({
                 "date": appointment.get("date", ""),
                 "what": appointment.get("what", ""),
