@@ -1,12 +1,12 @@
 {
   "domain": "sfoweb",
   "name": "SFOWeb",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "documentation": "https://github.com/rassos/ha_sfoweb",
   "issue_tracker": "https://github.com/rassos/ha_sfoweb/issues",
   "dependencies": [],
   "codeowners": ["@rassos"],
-  "requirements": ["aiohttp>=3.8.0", "beautifulsoup4>=4.11.0"],
+  "requirements": ["aiohttp>=3.8.0", "beautifulsoup4>=4.11.0", "requests-html>=0.10.0"],
   "config_flow": true,
   "iot_class": "cloud_polling",
   "after_dependencies": ["http"]

@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import DOMAIN
-from .scraper import SFOScraper
+from .scraper_js import SFOJSScraper
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def async_setup_entry(
 class SFOWebDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching SFOWeb appointment data."""
 
-    def __init__(self, hass: HomeAssistant, scraper: SFOScraper) -> None:
+    def __init__(self, hass: HomeAssistant, scraper: SFOJSScraper) -> None:
         """Initialize the coordinator."""
         self.scraper = scraper
         super().__init__(
