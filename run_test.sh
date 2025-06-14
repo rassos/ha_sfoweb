@@ -11,6 +11,6 @@ if [ ! -d "venv" ]; then
     exit 1
 fi
 
-# Activate virtual environment and run test
+# Activate virtual environment and run standalone test
 source venv/bin/activate
-python test_scraper.py
+python test_standalone.py

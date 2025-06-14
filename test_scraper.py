@@ -8,9 +8,9 @@ import os
 import getpass
 
 # Add the custom_components path to sys.path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components', 'sfoweb'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_components'))
 
-from scraper_enhanced import SFOEnhancedScraper
+from sfoweb.scraper_enhanced import SFOEnhancedScraper
 
 # Set up logging
 logging.basicConfig(
