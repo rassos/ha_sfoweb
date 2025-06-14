@@ -426,24 +426,38 @@ class SFOScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
+            # Debug: Log page structure
+            _LOGGER.info(f"Appointments page HTML length: {len(html)}")
+            
             # Look for tables
             tables = soup.find_all('table')
+            _LOGGER.info(f"Found {len(tables)} tables on appointments page")
             
-            for table in tables:
+            for i, table in enumerate(tables):
                 rows = table.find_all('tr')
+                _LOGGER.info(f"Table {i+1} has {len(rows)} rows")
+                
+                # Log table structure for debugging
+                if len(rows) > 0:
+                    first_row_cells = rows[0].find_all(['td', 'th'])
+                    _LOGGER.debug(f"Table {i+1} first row has {len(first_row_cells)} cells")
+                    if first_row_cells:
+                        headers = [cell.get_text().strip() for cell in first_row_cells]
+                        _LOGGER.debug(f"Table {i+1} headers: {headers}")
                 
                 # Skip header, process data rows
-                for row in rows[1:]:
+                for j, row in enumerate(rows[1:], 1):
                     cells = row.find_all(['td', 'th'])
                     if len(cells) >= 3:
                         cell_texts = [cell.get_text().strip() for cell in cells]
+                        _LOGGER.debug(f"Table {i+1}, Row {j}: {cell_texts}")
                         
                         date_text = cell_texts[0] if len(cell_texts) > 0 else ""
                         what_text = cell_texts[1] if len(cell_texts) > 1 else ""
                         time_text = cell_texts[2] if len(cell_texts) > 2 else ""
                         comment_text = cell_texts[3] if len(cell_texts) > 3 else ""
                         
-                        # Include all appointments for now
+                        # Include all appointments for now (not just Selvbestemmer)
                         if date_text and what_text:
                             appointment = {
                                 "date": date_text,
@@ -454,6 +468,25 @@ class SFOScraper:
                             }
                             appointments.append(appointment)
                             _LOGGER.info(f"Found appointment: {appointment['full_description']}")
+                    elif len(cells) > 0:
+                        # Log rows that don't have enough cells
+                        cell_texts = [cell.get_text().strip() for cell in cells]
+                        _LOGGER.debug(f"Table {i+1}, Row {j} (insufficient cells): {cell_texts}")
+            
+            # If no tables or appointments found, look for other content
+            if not appointments:
+                _LOGGER.info("No appointments found in tables, checking for other content...")
+                
+                # Look for common "no appointments" messages
+                text_content = soup.get_text().lower()
+                if "ingen" in text_content or "none" in text_content or "empty" in text_content:
+                    _LOGGER.info("Found 'no appointments' indicator in page content")
+                elif "aftale" in text_content:
+                    _LOGGER.info("Page contains 'aftale' but no appointments found in tables")
+                    # Log some of the text content for debugging
+                    _LOGGER.debug(f"Page text sample: {soup.get_text()[:500]}...")
+            
+            _LOGGER.info(f"Total appointments parsed: {len(appointments)}")
             
         except Exception as e:
             _LOGGER.error(f"Error parsing appointments: {e}")
