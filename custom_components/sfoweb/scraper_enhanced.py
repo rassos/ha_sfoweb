@@ -313,7 +313,8 @@ class SFOEnhancedScraper:
             # Success indicators
             success_indicators = [
                 'dashboard', 'aftaler', 'appointments', 'kalender', 'schedule',
-                'velkommen', 'welcome', 'logout', 'logud', 'profil', 'profile'
+                'velkommen', 'welcome', 'logout', 'logud', 'profil', 'profile',
+                'guardian', 'forældre', 'parent'
             ]
             
             # Error indicators
@@ -325,8 +326,11 @@ class SFOEnhancedScraper:
             has_success = any(indicator in text_lower for indicator in success_indicators)
             has_error = any(indicator in text_lower for indicator in error_indicators)
             
+            _LOGGER.debug(f"Auth check - Status: {status_code}, Success indicators: {has_success}, Error indicators: {has_error}, Text length: {len(response_text)}")
+            
             # If we have success indicators and no errors, or if it's a redirect
             if (has_success and not has_error) or status_code == 302:
+                _LOGGER.info("Authentication success detected!")
                 return True
             
             # If no login indicators are present and we have substantial content
@@ -334,6 +338,7 @@ class SFOEnhancedScraper:
             has_login = any(indicator in text_lower for indicator in login_indicators)
             
             if not has_login and not has_error and len(response_text) > 1000:
+                _LOGGER.info("Authentication likely successful (no login page)")
                 return True
                 
         except Exception as e:

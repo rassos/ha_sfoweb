@@ -113,7 +113,7 @@ class SFOWebAppointmentsSensor(CoordinatorEntity, SensorEntity):
         
         attributes = {
             "appointments": [],
-            "last_updated": self.coordinator.last_update_success_time,
+            "last_updated": self.coordinator.last_update_success,
         }
         
         # Add appointment details
@@ -163,7 +163,7 @@ class SFOWebNextAppointmentSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes."""
         if self.coordinator.data is None or len(self.coordinator.data) == 0:
-            return {"last_updated": self.coordinator.last_update_success_time}
+            return {"last_updated": self.coordinator.last_update_success}
         
         next_appointment = self.coordinator.data[0]
         
@@ -173,7 +173,7 @@ class SFOWebNextAppointmentSensor(CoordinatorEntity, SensorEntity):
             "time": next_appointment.get("time", ""),
             "comment": next_appointment.get("comment", ""),
             "total_appointments": len(self.coordinator.data),
-            "last_updated": self.coordinator.last_update_success_time,
+            "last_updated": self.coordinator.last_update_success,
         }
 
     @property
