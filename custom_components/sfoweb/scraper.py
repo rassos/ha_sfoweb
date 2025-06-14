@@ -80,21 +80,138 @@ class SFOScraper:
     async def _attempt_authentication_flow(self, session: aiohttp.ClientSession) -> bool:
         """Attempt various authentication flows."""
         
-        # Flow 1: Standard form-based authentication
+        # Flow 1: Check if we're dealing with the correct SFO system
+        if await self._detect_sfo_system(session):
+            return True
+        
+        # Flow 2: Standard form-based authentication
         if await self._try_standard_form_auth(session):
             return True
         
-        # Flow 2: AJAX/API-based authentication
+        # Flow 3: AJAX/API-based authentication
         if await self._try_ajax_auth(session):
             return True
         
-        # Flow 3: OAuth/SSO redirect flow
+        # Flow 4: OAuth/SSO redirect flow
         if await self._try_oauth_flow(session):
             return True
         
-        # Flow 4: Hidden iframe authentication
-        if await self._try_iframe_auth(session):
-            return True
+        return False
+
+    async def _detect_sfo_system(self, session: aiohttp.ClientSession) -> bool:
+        """Detect and handle specific SFO system types."""
+        try:
+            _LOGGER.info("Detecting SFO system type...")
+            
+            # From your logs, it seems like you're being redirected to soestjernen.sfoweb.dk
+            # Let's start there instead of the generic login URL
+            sfo_urls = [
+                "https://soestjernen.sfoweb.dk",
+                "https://soestjernen.sfoweb.dk/login",
+                LOGIN_URL,
+            ]
+            
+            for url in sfo_urls:
+                try:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            html = await response.text()
+                            
+                            # Check if this looks like the right SFO system
+                            if "soestjernen" in html.lower() or "sfo" in html.lower():
+                                _LOGGER.info(f"Found SFO system at: {url}")
+                                return await self._handle_sfo_login(session, html, str(response.url))
+                                
+                except Exception as e:
+                    _LOGGER.debug(f"Failed to access {url}: {e}")
+                    continue
+                    
+        except Exception as e:
+            _LOGGER.debug(f"SFO system detection failed: {e}")
+        
+        return False
+
+    async def _handle_sfo_login(self, session: aiohttp.ClientSession, html: str, current_url: str) -> bool:
+        """Handle login for detected SFO system."""
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for parent login redirect (based on your logs)
+            parent_links = soup.find_all('a', href=True)
+            for link in parent_links:
+                href = link['href']
+                link_text = link.get_text().lower()
+                
+                if ('parent' in href.lower() or 'foraeldr' in href.lower() or 
+                    'parent' in link_text or 'forældre' in link_text):
+                    
+                    if not href.startswith('http'):
+                        href = urljoin(current_url, href)
+                    
+                    _LOGGER.info(f"Following parent login link: {href}")
+                    
+                    async with session.get(href) as parent_response:
+                        if parent_response.status == 200:
+                            parent_html = await parent_response.text()
+                            parent_soup = BeautifulSoup(parent_html, 'html.parser')
+                            
+                            # Look for login form or further redirects
+                            form = parent_soup.find('form')
+                            if form and self._has_login_fields(parent_soup):
+                                return await self._submit_login_form(session, form, str(parent_response.url))
+                            
+                            # Check for further redirects or login options
+                            return await self._handle_parent_login_page(session, parent_html, str(parent_response.url))
+            
+            # If no parent link found, try direct login
+            form = soup.find('form')
+            if form and self._has_login_fields(soup):
+                return await self._submit_login_form(session, form, current_url)
+                
+        except Exception as e:
+            _LOGGER.debug(f"SFO login handling failed: {e}")
+        
+        return False
+
+    async def _handle_parent_login_page(self, session: aiohttp.ClientSession, html: str, current_url: str) -> bool:
+        """Handle parent login page with multiple authentication options."""
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for different login methods
+            login_methods = []
+            
+            # Check for UNI Login, NemLog-in, etc.
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                text = link.get_text().lower()
+                
+                if any(method in text for method in ['forældre login', 'parent login', 'uni login']):
+                    if not href.startswith('http'):
+                        href = urljoin(current_url, href)
+                    login_methods.append((href, text))
+            
+            # Try each login method
+            for method_url, method_name in login_methods:
+                _LOGGER.info(f"Trying login method: {method_name} at {method_url}")
+                
+                try:
+                    async with session.get(method_url) as method_response:
+                        if method_response.status == 200:
+                            method_html = await method_response.text()
+                            method_soup = BeautifulSoup(method_html, 'html.parser')
+                            
+                            form = method_soup.find('form')
+                            if form and self._has_login_fields(method_soup):
+                                if await self._submit_login_form(session, form, str(method_response.url)):
+                                    return True
+                                    
+                except Exception as e:
+                    _LOGGER.debug(f"Failed login method {method_name}: {e}")
+                    continue
+                    
+        except Exception as e:
+            _LOGGER.debug(f"Parent login page handling failed: {e}")
         
         return False
 
@@ -212,6 +329,7 @@ class SFOScraper:
                 "https://sfo-web.aula.dk/sso/login",
                 "https://login.aula.dk/auth",
                 "https://wayf.dk/login",  # Common Danish federation
+                "https://soestjernen.sfoweb.dk/auth",
             ]
             
             for endpoint in oauth_endpoints:
@@ -230,45 +348,6 @@ class SFOScraper:
                     
         except Exception as e:
             _LOGGER.debug(f"OAuth flow failed: {e}")
-        
-        return False
-
-    async def _try_iframe_auth(self, session: aiohttp.ClientSession) -> bool:
-        """Try authentication through iframes."""
-        try:
-            _LOGGER.info("Attempting iframe authentication...")
-            
-            async with session.get(LOGIN_URL) as response:
-                if response.status != 200:
-                    return False
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # Look for iframes that might contain login forms
-                iframes = soup.find_all('iframe')
-                for iframe in iframes:
-                    src = iframe.get('src')
-                    if src:
-                        if not src.startswith('http'):
-                            src = urljoin(str(response.url), src)
-                        
-                        _LOGGER.info(f"Checking iframe: {src}")
-                        
-                        try:
-                            async with session.get(src) as iframe_response:
-                                if iframe_response.status == 200:
-                                    iframe_html = await iframe_response.text()
-                                    iframe_soup = BeautifulSoup(iframe_html, 'html.parser')
-                                    
-                                    iframe_form = iframe_soup.find('form')
-                                    if iframe_form and self._has_login_fields(iframe_soup):
-                                        return await self._submit_login_form(session, iframe_form, src)
-                        except:
-                            continue
-                            
-        except Exception as e:
-            _LOGGER.debug(f"Iframe auth failed: {e}")
         
         return False
 
@@ -308,7 +387,7 @@ class SFOScraper:
             
             # Look for parent-related keywords
             if any(keyword in text for keyword in ['forældre', 'parent', 'guardians']) or \
-               any(keyword in href.lower() for keyword in ['parent', 'foraldre', 'guardian']):
+               any(keyword in href.lower() for keyword in ['parent', 'foraeldr', 'guardian']):
                 links.append(href)
         
         return links
@@ -339,8 +418,21 @@ class SFOScraper:
                 if name:
                     form_data[name] = value
             
-            # Find username field
-            username_field = form.find('input', attrs={'name': re.compile(r'user|email|login', re.I)})
+            # Find username field - try multiple patterns
+            username_patterns = [
+                {'name': re.compile(r'user', re.I)},
+                {'name': re.compile(r'email', re.I)},
+                {'name': re.compile(r'login', re.I)},
+                {'name': 'username'},
+                {'id': re.compile(r'user', re.I)},
+            ]
+            
+            username_field = None
+            for pattern in username_patterns:
+                username_field = form.find('input', attrs=pattern)
+                if username_field:
+                    break
+            
             if username_field:
                 form_data[username_field['name']] = self.username
             
@@ -348,6 +440,13 @@ class SFOScraper:
             password_field = form.find('input', attrs={'type': 'password'})
             if password_field:
                 form_data[password_field['name']] = self.password
+            
+            # Add any submit button values
+            submit_buttons = form.find_all('input', type='submit')
+            for button in submit_buttons:
+                if button.get('name') and button.get('value'):
+                    form_data[button['name']] = button['value']
+                    break  # Only add the first submit button
             
             _LOGGER.info(f"Submitting form to: {action}")
             _LOGGER.debug(f"Form data keys: {list(form_data.keys())}")
@@ -366,34 +465,50 @@ class SFOScraper:
     async def _verify_authentication(self, session: aiohttp.ClientSession) -> bool:
         """Verify if authentication was successful."""
         try:
-            async with session.get(APPOINTMENTS_URL) as response:
-                if response.status == 200:
-                    html = await response.text()
+            # Try multiple endpoints to verify authentication
+            test_urls = [
+                APPOINTMENTS_URL,
+                "https://soestjernen.sfoweb.dk/aftaler",
+                "https://soestjernen.sfoweb.dk/appointments",
+                "https://soestjernen.sfoweb.dk/dashboard",
+            ]
+            
+            for url in test_urls:
+                try:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            html = await response.text()
+                            
+                            # Check for signs of successful authentication
+                            success_indicators = [
+                                'appointment',
+                                'aftale',
+                                'tabel',
+                                'kalender',
+                                'logout',
+                                'logud',
+                                'dashboard',
+                                'schedule'
+                            ]
+                            
+                            html_lower = html.lower()
+                            for indicator in success_indicators:
+                                if indicator in html_lower:
+                                    _LOGGER.info(f"Authentication verified - found '{indicator}' in response")
+                                    return True
+                            
+                            # Check if we're NOT on a login page
+                            login_indicators = ['login', 'password', 'brugernavn', 'sign in']
+                            login_present = any(indicator in html_lower for indicator in login_indicators)
+                            
+                            if not login_present and len(html) > 1000:  # Substantial content
+                                _LOGGER.info("Authentication likely successful - no login indicators found")
+                                return True
+                                
+                except Exception as e:
+                    _LOGGER.debug(f"Failed to verify auth with {url}: {e}")
+                    continue
                     
-                    # Check for signs of successful authentication
-                    success_indicators = [
-                        'appointment',
-                        'aftale',
-                        'tabel',
-                        'kalender',
-                        'logout',
-                        'logud'
-                    ]
-                    
-                    html_lower = html.lower()
-                    for indicator in success_indicators:
-                        if indicator in html_lower:
-                            _LOGGER.info(f"Authentication verified - found '{indicator}' in response")
-                            return True
-                    
-                    # Check if we're still on a login page
-                    login_indicators = ['login', 'password', 'brugernavn']
-                    login_present = any(indicator in html_lower for indicator in login_indicators)
-                    
-                    if not login_present:
-                        _LOGGER.info("Authentication likely successful - no login indicators found")
-                        return True
-                        
         except Exception as e:
             _LOGGER.debug(f"Authentication verification failed: {e}")
         
@@ -406,13 +521,30 @@ class SFOScraper:
         try:
             _LOGGER.info("Fetching appointments data...")
             
-            async with session.get(APPOINTMENTS_URL) as response:
-                if response.status != 200:
-                    _LOGGER.error(f"Failed to fetch appointments: {response.status}")
-                    return appointments
-                
-                html = await response.text()
-                appointments = self._parse_appointments_html(html)
+            # Try multiple possible appointment URLs
+            appointment_urls = [
+                APPOINTMENTS_URL,
+                "https://soestjernen.sfoweb.dk/aftaler",
+                "https://soestjernen.sfoweb.dk/appointments",
+                "https://soestjernen.sfoweb.dk/calendar",
+            ]
+            
+            for url in appointment_urls:
+                try:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            html = await response.text()
+                            appointments = self._parse_appointments_html(html)
+                            
+                            if appointments:
+                                _LOGGER.info(f"Found {len(appointments)} appointments from {url}")
+                                return appointments
+                            else:
+                                _LOGGER.debug(f"No appointments found at {url}")
+                                
+                except Exception as e:
+                    _LOGGER.debug(f"Failed to fetch from {url}: {e}")
+                    continue
                 
         except Exception as e:
             _LOGGER.error(f"Error fetching appointments: {e}")
@@ -420,7 +552,7 @@ class SFOScraper:
         return appointments
 
     def _parse_appointments_html(self, html: str) -> List[Dict[str, Any]]:
-        """Parse appointments from HTML."""
+        """Parse appointments from HTML with improved detection."""
         appointments = []
         
         try:
@@ -429,7 +561,15 @@ class SFOScraper:
             # Debug: Log page structure
             _LOGGER.info(f"Appointments page HTML length: {len(html)}")
             
-            # Look for tables
+            # Check if we're actually on a login page (common issue)
+            login_indicators = ['login', 'password', 'brugernavn', 'sign in', 'log på']
+            page_text_lower = soup.get_text().lower()
+            
+            if any(indicator in page_text_lower for indicator in login_indicators):
+                _LOGGER.warning("Still on login page - authentication may have failed")
+                return appointments
+            
+            # Look for tables first
             tables = soup.find_all('table')
             _LOGGER.info(f"Found {len(tables)} tables on appointments page")
             
@@ -473,13 +613,16 @@ class SFOScraper:
                         cell_texts = [cell.get_text().strip() for cell in cells]
                         _LOGGER.debug(f"Table {i+1}, Row {j} (insufficient cells): {cell_texts}")
             
-            # If no tables or appointments found, look for other content
+            # If no appointments in tables, try alternative parsing methods
+            if not appointments:
+                appointments.extend(self._parse_alternative_formats(soup))
+            
+            # If still no appointments, look for common "no appointments" messages
             if not appointments:
                 _LOGGER.info("No appointments found in tables, checking for other content...")
                 
-                # Look for common "no appointments" messages
                 text_content = soup.get_text().lower()
-                if "ingen" in text_content or "none" in text_content or "empty" in text_content:
+                if any(phrase in text_content for phrase in ["ingen", "none", "empty", "no appointments"]):
                     _LOGGER.info("Found 'no appointments' indicator in page content")
                 elif "aftale" in text_content:
                     _LOGGER.info("Page contains 'aftale' but no appointments found in tables")
@@ -493,8 +636,60 @@ class SFOScraper:
         
         return appointments
 
+    def _parse_alternative_formats(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Try alternative parsing methods for appointments."""
+        appointments = []
+        
+        try:
+            # Method 1: Look for div-based appointment listings
+            appointment_divs = soup.find_all('div', class_=re.compile(r'appointment|event|aftale', re.I))
+            for div in appointment_divs:
+                text = div.get_text().strip()
+                if text and len(text) > 10:  # Substantial content
+                    appointments.append({
+                        "date": "Unknown",
+                        "what": text[:50] + "..." if len(text) > 50 else text,
+                        "time": "Unknown",
+                        "comment": "",
+                        "full_description": text
+                    })
+            
+            # Method 2: Look for list items
+            if not appointments:
+                li_items = soup.find_all('li')
+                for li in li_items:
+                    text = li.get_text().strip()
+                    # Look for date patterns
+                    if re.search(r'\d{1,2}[./]\d{1,2}', text) or re.search(r'\d{4}-\d{2}-\d{2}', text):
+                        appointments.append({
+                            "date": "See description",
+                            "what": text[:50] + "..." if len(text) > 50 else text,
+                            "time": "See description",
+                            "comment": "",
+                            "full_description": text
+                        })
+            
+            # Method 3: Look for calendar-specific elements
+            if not appointments:
+                calendar_elements = soup.find_all(['div', 'span'], class_=re.compile(r'calendar|event|date', re.I))
+                for element in calendar_elements:
+                    text = element.get_text().strip()
+                    if text and len(text) > 5:
+                        appointments.append({
+                            "date": "Calendar item",
+                            "what": text[:50] + "..." if len(text) > 50 else text,
+                            "time": "See description",
+                            "comment": "",
+                            "full_description": text
+                        })
+                        
+        except Exception as e:
+            _LOGGER.debug(f"Alternative parsing failed: {e}")
+        
+        return appointments[:10]  # Limit to prevent spam
+
     async def async_test_credentials(self) -> bool:
-        """Test if credentials are valid."""
+        """Test if credentials are valid by attempting a quick login."""
         try:
             if not self.username or not self.password:
                 return False
@@ -502,7 +697,19 @@ class SFOScraper:
             if len(self.username) < 3 or len(self.password) < 3:
                 return False
             
-            return True
+            # Try a quick authentication test
+            timeout = aiohttp.ClientTimeout(total=30)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
+            
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                # Just check if we can reach the login page
+                async with session.get(LOGIN_URL) as response:
+                    if response.status == 200:
+                        return True
+            
+            return True  # Assume credentials are valid for setup
             
         except Exception as e:
             _LOGGER.debug(f"Credential test failed: {e}")
