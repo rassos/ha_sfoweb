@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
-Make sure you have Python 3 and pip installed on your Ubuntu system:
+Make sure you have Python 3 and virtual environment support on your Ubuntu system:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip -y
+sudo apt install python3 python3-full python3-venv -y
 ```
 
 ## Installation Methods
@@ -23,26 +23,34 @@ chmod +x install_deps.sh
 
 ### Method 2: Manual Installation
 
-Install dependencies manually:
+Install dependencies manually using a virtual environment:
 
 ```bash
 cd /path/to/ha_sfoweb
-pip3 install --user -r requirements.txt
-```
 
-Or install each package individually:
+# Create virtual environment
+python3 -m venv venv
 
-```bash
-pip3 install --user aiohttp>=3.8.0
-pip3 install --user beautifulsoup4>=4.11.0
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 ## Testing the Scraper
 
 After installation, test the scraper with your credentials:
 
+### Option 1: Use the convenience script
 ```bash
-python3 test_scraper.py
+./run_test.sh
+```
+
+### Option 2: Manual activation
+```bash
+source venv/bin/activate
+python test_scraper.py
 ```
 
 The script will prompt you for your SFO username and password, then test:
