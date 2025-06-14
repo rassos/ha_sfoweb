@@ -2,11 +2,11 @@
   "domain": "sfoweb",
   "name": "SFOWeb",
   "version": "1.0.0",
-  "documentation": "https://github.com/yourusername/ha-sfoweb",
-  "issue_tracker": "https://github.com/yourusername/ha-sfoweb/issues",
+  "documentation": "https://github.com/rassos/ha_sfoweb",
+  "issue_tracker": "https://github.com/rassos/ha_sfoweb/issues",
   "dependencies": [],
-  "codeowners": ["@yourusername"],
-  "requirements": ["selenium==4.15.0"],
+  "codeowners": ["@rassos"],
+  "requirements": [],
   "config_flow": true,
   "iot_class": "cloud_polling"
 }
